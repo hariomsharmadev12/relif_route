@@ -69,7 +69,7 @@ function ReviewCard({
   return (
     <motion.div
       variants={fadeUp}
-      className="w-[85%] shrink-0 snap-center sm:w-[360px]"
+      className="w-[85vw] max-w-[360px] shrink-0 snap-center sm:w-[360px]"
     >
       <div
         ref={ref}
@@ -84,7 +84,7 @@ function ReviewCard({
         <h3 className="mt-4 text-lg font-semibold leading-snug tracking-tight">
           {card.title}
         </h3>
-        <p className="mt-2 text-pretty text-sm leading-relaxed text-muted-foreground">
+        <p className="mt-2 line-clamp-6 text-pretty text-sm leading-relaxed text-muted-foreground">
           {card.body}
         </p>
         <div className="mt-5 flex items-center gap-1">
