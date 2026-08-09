@@ -84,7 +84,7 @@ function ReviewCard({
         <h3 className="mt-4 text-lg font-semibold leading-snug tracking-tight">
           {card.title}
         </h3>
-        <p className="mt-2 flex-1 text-pretty text-sm leading-relaxed text-muted-foreground">
+        <p className="mt-2 text-pretty text-sm leading-relaxed text-muted-foreground">
           {card.body}
         </p>
         <div className="mt-5 flex items-center gap-1">
@@ -175,7 +175,7 @@ export function Testimonials() {
         initial="hidden"
         whileInView="show"
         viewport={{ once: true, margin: "-80px" }}
-        className="scrollbar-none mt-10 flex snap-x snap-mandatory gap-4 overflow-x-auto pb-2"
+        className="scrollbar-none mt-10 flex items-start snap-x snap-mandatory gap-4 overflow-x-auto pb-2"
       >
         {CARDS.map((card, i) => (
           <div key={card.title} data-card>
