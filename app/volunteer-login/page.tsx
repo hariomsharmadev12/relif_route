@@ -107,12 +107,7 @@ function PasswordField({
         >
           {label}
         </label>
-        <Link
-          href="/forgot-password"
-          className="text-[11px] font-medium text-foreground/70 hover:text-foreground hover:underline"
-        >
-          Forgot password?
-        </Link>
+        
       </div>
       <div className="group relative">
         <Lock className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground/70 transition-colors duration-200 peer-focus:text-foreground" />

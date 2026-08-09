@@ -45,7 +45,7 @@ export default function NgoDashboardPage() {
   async function handleSignOut() {
     await supabase.auth.signOut();
     // ⚠️ swap this for your actual NGO/receiver login route if it's named differently
-    router.push("/ngo-login");
+    router.push("/volunteer-login");
   }
 
   return (
