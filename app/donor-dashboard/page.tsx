@@ -35,25 +35,48 @@ export default function DonorDashboardPage() {
         return;
       }
 
-      // TEMP: cross-check this id/email against the one logged from
-      // upload-view.tsx's insert — remove once the two bugs are confirmed
-      // fixed.
-      console.log("Dashboard loaded as:", user.id, user.email);
-
       const label =
         (user.user_metadata?.full_name as string | undefined) ??
         user.email?.split("@")[0] ??
         "Donor";
       setDonorName(label);
 
+      // donors.id (what food_listings.donor_id actually references) is
+      // NOT the same value as the auth user id — donors.user_id is what
+      // links to auth. Resolve the donor's own row id first, same fix as
+      // the insert side in upload-view.tsx.
+      const { data: donorRow, error: donorError } = await supabase
+        .from("donors")
+        .select("id")
+        .eq("user_id", user.id)
+        .maybeSingle();
+
+      if (donorError) {
+        console.error(
+          "Failed to load donor profile:",
+          donorError.message,
+          donorError.code,
+        );
+        setIsLoadingListings(false);
+        return;
+      }
+
+      if (!donorRow) {
+        console.warn(
+          `No donors row for user ${user.id} (${user.email}) — no listings to show.`,
+        );
+        setIsLoadingListings(false);
+        return;
+      }
+
       const { data, error } = await supabase
         .from("food_listings")
         .select("*")
-        .eq("donor_id", user.id)
+        .eq("donor_id", donorRow.id)
         .order("created_at", { ascending: false });
 
       if (error) {
-        console.error("Failed to load listings:", error);
+        console.error("Failed to load listings:", error.message, error.code);
       } else if (data) {
         setListings(data.map(mapRowToListing));
       }

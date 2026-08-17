@@ -9,6 +9,7 @@ import { FoodCard } from "./food-card";
 
 interface UploadViewProps {
   listings: FoodListing[];
+  isLoading: boolean;
   onSubmitted: (listing: FoodListing) => void;
 }
 
@@ -28,7 +29,7 @@ function describeError(err: unknown): string {
   return String(err);
 }
 
-export function UploadView({ listings, onSubmitted }: UploadViewProps) {
+export function UploadView({ listings, isLoading, onSubmitted }: UploadViewProps) {
   const [supabase] = useState(() =>
     createBrowserClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -155,6 +156,10 @@ export function UploadView({ listings, onSubmitted }: UploadViewProps) {
       goodUntil: new Date(goodUntil).toISOString(),
       createdAt: new Date().toISOString(),
       status: "available",
+      acceptedByReceiverId: null,
+      acceptedByName: null,
+      acceptedByPhone: null,
+      acceptedAt: null,
     };
 
     try {
@@ -170,6 +175,23 @@ export function UploadView({ listings, onSubmitted }: UploadViewProps) {
       if (userError || !user) {
         throw new Error(
           "You're not signed in — log in as a donor and try listing again.",
+        );
+      }
+
+      // donors.id (the FK target on food_listings.donor_id) is the
+      // donor's own row id, resolved from the signed-in user's auth id
+      // via donors.user_id. The RLS insert policy (my_donor_id()) also
+      // expects donor_id = donors.id, so the FK and RLS now agree.
+      const { data: donorRow, error: donorError } = await supabase
+        .from("donors")
+        .select("id")
+        .eq("user_id", user.id)
+        .maybeSingle();
+
+      if (donorError) throw donorError;
+      if (!donorRow) {
+        throw new Error(
+          "No donor profile found for this account — finish donor signup first.",
         );
       }
 
@@ -190,7 +212,7 @@ export function UploadView({ listings, onSubmitted }: UploadViewProps) {
         .from("food_listings")
         .insert({
           id: localListing.id,
-          donor_id: user.id,
+          donor_id: donorRow.id,
           name: localListing.name,
           quantity: localListing.quantity,
           unit: localListing.unit,
@@ -207,10 +229,9 @@ export function UploadView({ listings, onSubmitted }: UploadViewProps) {
       setSuccessMessage("Food listed — volunteers nearby can now see it.");
       resetForm();
     } catch (err) {
-      // Supabase isn't wired up yet (or the request failed) — keep the
-      // listing visible locally so the flow still demos end-to-end,
-      // but show the *real* reason instead of a generic message so you
-      // don't have to dig through devtools to debug it.
+      // Keep the listing visible locally so the flow still demos
+      // end-to-end even if the Supabase save failed, but show the *real*
+      // reason instead of a generic message.
       const reason = describeError(err);
       console.error("Failed to save listing to Supabase:", err);
       onSubmitted(localListing);
@@ -438,17 +459,33 @@ export function UploadView({ listings, onSubmitted }: UploadViewProps) {
         </div>
       </form>
 
-      {listings.length > 0 && (
+      {isLoading ? (
         <div className="mt-12">
           <h2 className="font-[family-name:var(--font-dashboard-display)] text-[20px] text-[#14231C]">
             Already uploaded
           </h2>
           <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {listings.map((listing) => (
-              <FoodCard key={listing.id} listing={listing} />
+            {[0, 1, 2].map((i) => (
+              <div
+                key={i}
+                className="aspect-[4/3] animate-pulse rounded-2xl bg-[#EEF1EC]"
+              />
             ))}
           </div>
         </div>
+      ) : (
+        listings.length > 0 && (
+          <div className="mt-12">
+            <h2 className="font-[family-name:var(--font-dashboard-display)] text-[20px] text-[#14231C]">
+              Already uploaded
+            </h2>
+            <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              {listings.map((listing) => (
+                <FoodCard key={listing.id} listing={listing} />
+              ))}
+            </div>
+          </div>
+        )
       )}
     </div>
   );
