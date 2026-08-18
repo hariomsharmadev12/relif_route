@@ -13,9 +13,7 @@ import {
   Utensils,
 } from "lucide-react";
 import { fadeUp, staggerContainer } from "@/components/motion-primitives";
-import { AutomatedAlertsCard } from "@/components/bento/automated-alerts-card";
 import { HeatmapRadarCard } from "@/components/bento/heatmap-radar-card";
-import { ImpactTickerCard } from "@/components/bento/impact-ticker-card";
 import { StatsRow } from "@/components/bento/stats-row";
 import { ProcessStepper } from "@/components/bento/process-stepper";
 import { SectionHeading } from "@/components/section-heading";
@@ -366,27 +364,6 @@ export function BentoShowcase() {
           <Card3D depth={15}>
             <StatsRow />
           </Card3D>
-        </motion.div>
-
-        {/* Lower Cards Row */}
-        <motion.div
-          variants={staggerContainer}
-          initial="hidden"
-          whileInView="show"
-          viewport={{ once: true, margin: "-80px" }}
-          className="mt-8 grid gap-6 lg:grid-cols-2"
-        >
-          <motion.div variants={fadeUp}>
-            <Card3D depth={20}>
-              <AutomatedAlertsCard />
-            </Card3D>
-          </motion.div>
-
-          <motion.div variants={fadeUp}>
-            <Card3D depth={20}>
-              <ImpactTickerCard />
-            </Card3D>
-          </motion.div>
         </motion.div>
 
         {/* Process Stepper Section */}

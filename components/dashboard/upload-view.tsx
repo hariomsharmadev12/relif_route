@@ -1,8 +1,15 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createBrowserClient } from "@supabase/ssr";
-import { ImagePlus, LocateFixed, Loader2, AlertCircle, X } from "lucide-react";
+import {
+  ImagePlus,
+  LocateFixed,
+  Loader2,
+  AlertCircle,
+  X,
+  MapPin,
+} from "lucide-react";
 import type { FoodListing, FoodUnit } from "./types";
 import { FOOD_UNITS } from "./types";
 import { FoodCard } from "./food-card";
@@ -14,6 +21,15 @@ interface UploadViewProps {
 }
 
 type LocateState = "idle" | "locating" | "done" | "error";
+
+interface AddressSuggestion {
+  label: string;
+  lat: number;
+  lng: number;
+}
+
+const ADDRESS_SEARCH_DEBOUNCE_MS = 500;
+const ADDRESS_SEARCH_MIN_CHARS = 4;
 
 // Supabase/Postgres errors carry message/details/hint/code — pull out
 // whatever is present instead of showing "[object Object]".
@@ -27,6 +43,30 @@ function describeError(err: unknown): string {
     );
   }
   return String(err);
+}
+
+// Forward geocoding via OpenStreetMap's free Nominatim API — same family
+// as the reverse-geocoding call below. Fine for demo/low volume; for real
+// production traffic, proxy this through your own server (or switch to a
+// paid geocoder) to respect Nominatim's usage policy.
+async function searchAddress(
+  query: string,
+  signal?: AbortSignal,
+): Promise<AddressSuggestion[]> {
+  const res = await fetch(
+    `https://nominatim.openstreetmap.org/search?format=json&limit=5&q=${encodeURIComponent(query)}`,
+    { signal },
+  );
+  if (!res.ok) return [];
+  const data = await res.json();
+  if (!Array.isArray(data)) return [];
+  return data
+    .map((d: any) => ({
+      label: d.display_name as string,
+      lat: parseFloat(d.lat),
+      lng: parseFloat(d.lon),
+    }))
+    .filter((s) => Number.isFinite(s.lat) && Number.isFinite(s.lng));
 }
 
 export function UploadView({ listings, isLoading, onSubmitted }: UploadViewProps) {
@@ -56,6 +96,20 @@ export function UploadView({ listings, isLoading, onSubmitted }: UploadViewProps
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
+  // Address-as-you-type suggestions.
+  const [suggestions, setSuggestions] = useState<AddressSuggestion[]>([]);
+  const [isSearchingAddress, setIsSearchingAddress] = useState(false);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchAbortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+      searchAbortRef.current?.abort();
+    };
+  }, []);
+
   function handlePickFile(file: File | undefined | null) {
     if (!file) return;
     if (!file.type.startsWith("image/")) {
@@ -73,9 +127,51 @@ export function UploadView({ listings, isLoading, onSubmitted }: UploadViewProps
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
+  // Donor is typing the address by hand. Whatever coords we had (from a
+  // previous "Use current" click or a previously picked suggestion) no
+  // longer match this text, so clear them — handleSubmit will try a
+  // last-chance geocode on submit if nothing gets picked from the list.
+  function handleAddressChange(value: string) {
+    setAddress(value);
+    setCoords(null);
+    setShowSuggestions(true);
+
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    searchAbortRef.current?.abort();
+
+    const trimmed = value.trim();
+    if (trimmed.length < ADDRESS_SEARCH_MIN_CHARS) {
+      setSuggestions([]);
+      setIsSearchingAddress(false);
+      return;
+    }
+
+    searchDebounceRef.current = setTimeout(async () => {
+      const controller = new AbortController();
+      searchAbortRef.current = controller;
+      setIsSearchingAddress(true);
+      try {
+        const results = await searchAddress(trimmed, controller.signal);
+        setSuggestions(results);
+      } catch (err) {
+        if ((err as { name?: string })?.name !== "AbortError") setSuggestions([]);
+      } finally {
+        setIsSearchingAddress(false);
+      }
+    }, ADDRESS_SEARCH_DEBOUNCE_MS);
+  }
+
+  function selectSuggestion(s: AddressSuggestion) {
+    setAddress(s.label);
+    setCoords({ lat: s.lat, lng: s.lng });
+    setSuggestions([]);
+    setShowSuggestions(false);
+  }
+
   // Reads the browser's current position, then reverse-geocodes it with
   // OpenStreetMap's free Nominatim API so the address field fills itself
-  // in. The donor can still edit the address by hand afterwards.
+  // in. The donor can still edit the address by hand afterwards (which
+  // will clear these coords and fall back to search-as-you-type).
   function useCurrentLocation() {
     if (!navigator.geolocation) {
       setLocateState("error");
@@ -85,6 +181,8 @@ export function UploadView({ listings, isLoading, onSubmitted }: UploadViewProps
 
     setLocateState("locating");
     setError(null);
+    setSuggestions([]);
+    setShowSuggestions(false);
 
     navigator.geolocation.getCurrentPosition(
       async (position) => {
@@ -124,6 +222,9 @@ export function UploadView({ listings, isLoading, onSubmitted }: UploadViewProps
     setCoords(null);
     setGoodUntil("");
     setLocateState("idle");
+    setSuggestions([]);
+    setShowSuggestions(false);
+    setIsSearchingAddress(false);
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -142,6 +243,21 @@ export function UploadView({ listings, isLoading, onSubmitted }: UploadViewProps
 
     setIsSubmitting(true);
 
+    // If the donor typed an address but never picked a suggestion (or
+    // typed something new after picking one), we won't have coords yet.
+    // Try one last geocode before falling back to address-only — this is
+    // what was missing before, and why typed addresses saved with no
+    // latitude/longitude.
+    let finalCoords = coords;
+    if (!finalCoords && address.trim()) {
+      try {
+        const results = await searchAddress(address.trim());
+        if (results[0]) finalCoords = { lat: results[0].lat, lng: results[0].lng };
+      } catch {
+        // Best effort — the listing can still save with just the address.
+      }
+    }
+
     // Local-first: build the listing immediately so the UI never blocks
     // on the network, then try to persist it to Supabase in the background.
     const localListing: FoodListing = {
@@ -151,8 +267,8 @@ export function UploadView({ listings, isLoading, onSubmitted }: UploadViewProps
       quantity: Number(quantity),
       unit,
       pickupAddress: address.trim(),
-      latitude: coords?.lat ?? null,
-      longitude: coords?.lng ?? null,
+      latitude: finalCoords?.lat ?? null,
+      longitude: finalCoords?.lng ?? null,
       goodUntil: new Date(goodUntil).toISOString(),
       createdAt: new Date().toISOString(),
       status: "available",
@@ -386,7 +502,7 @@ export function UploadView({ listings, isLoading, onSubmitted }: UploadViewProps
             </div>
           </div>
 
-          <div>
+          <div className="relative">
             <label
               htmlFor="address"
               className="mb-1.5 block text-[13px] font-semibold text-[#14231C]"
@@ -397,8 +513,17 @@ export function UploadView({ listings, isLoading, onSubmitted }: UploadViewProps
               <input
                 id="address"
                 type="text"
+                autoComplete="off"
                 value={address}
-                onChange={(e) => setAddress(e.target.value)}
+                onChange={(e) => handleAddressChange(e.target.value)}
+                onFocus={() => {
+                  if (suggestions.length > 0) setShowSuggestions(true);
+                }}
+                onBlur={() => {
+                  // Delay so a click on a suggestion (onMouseDown below)
+                  // registers before the dropdown disappears.
+                  setTimeout(() => setShowSuggestions(false), 150);
+                }}
                 placeholder="Street, area, landmark"
                 className="w-full rounded-xl border border-[#D5DAD1] bg-white px-4 py-3 text-[14px] text-[#14231C] outline-none placeholder:text-[#A6AEA8] focus:border-[#1F6B4C] focus:ring-2 focus:ring-[#1F6B4C]/15"
               />
@@ -416,10 +541,42 @@ export function UploadView({ listings, isLoading, onSubmitted }: UploadViewProps
                 Use current
               </button>
             </div>
-            {coords && (
+
+            {showSuggestions && (isSearchingAddress || suggestions.length > 0) && (
+              <div className="absolute z-10 mt-1 w-full overflow-hidden rounded-xl border border-[#D5DAD1] bg-white shadow-lg">
+                {isSearchingAddress && suggestions.length === 0 ? (
+                  <p className="flex items-center gap-2 px-4 py-3 text-[13px] text-[#7C8B81]">
+                    <Loader2 size={14} className="animate-spin" /> Searching…
+                  </p>
+                ) : (
+                  suggestions.map((s, i) => (
+                    <button
+                      key={`${s.lat}-${s.lng}-${i}`}
+                      type="button"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        selectSuggestion(s);
+                      }}
+                      className="flex w-full items-start gap-2 px-4 py-2.5 text-left text-[13px] text-[#14231C] hover:bg-[#F7F8F5]"
+                    >
+                      <MapPin size={14} className="mt-0.5 shrink-0 text-[#7C8B81]" />
+                      <span className="line-clamp-2">{s.label}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+
+            {coords ? (
               <p className="mt-1.5 font-[family-name:var(--font-dashboard-mono)] text-[11px] text-[#7C8B81]">
                 {coords.lat.toFixed(5)}, {coords.lng.toFixed(5)}
               </p>
+            ) : (
+              address.trim().length > 0 && (
+                <p className="mt-1.5 text-[11px] text-[#A6AEA8]">
+                  Pick a suggestion above to pin the exact location
+                </p>
+              )
             )}
           </div>
 

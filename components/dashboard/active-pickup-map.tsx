@@ -20,6 +20,13 @@ import type { NgoFoodListing } from "./types";
 
 const BROADCAST_INTERVAL_MS = 4000;
 
+// Route re-fetch throttling. watchPosition can fire every 1-2s on mobile —
+// without this, every tick hits OSRM's free public server, gets
+// rate-limited, and the route flickers in and out. Only re-route once the
+// NGO has actually moved a meaningful distance AND enough time has passed.
+const MIN_REROUTE_DISTANCE_METERS = 40;
+const MIN_REROUTE_INTERVAL_MS = 8000;
+
 const donorIcon = L.divIcon({
   className: "",
   html: `<div style="width:16px;height:16px;border-radius:9999px;background:#1F6B4C;border:3px solid white;box-shadow:0 1px 4px rgba(20,30,24,0.35)"></div>`,
@@ -43,6 +50,32 @@ interface RouteInfo {
   coordinates: [number, number][];
   distanceMeters: number;
   durationSeconds: number;
+}
+
+function haversineMeters(a: LatLng, b: LatLng): number {
+  const R = 6371000;
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+  const lat1 = toRad(a.lat);
+  const lat2 = toRad(b.lat);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+function friendlyGeoError(err: GeolocationPositionError): string {
+  switch (err.code) {
+    case err.PERMISSION_DENIED:
+      return "Location access is blocked — allow location for this site to see the live route.";
+    case err.POSITION_UNAVAILABLE:
+      return "Can't get a GPS fix right now. Try moving outdoors or near a window.";
+    case err.TIMEOUT:
+      return "GPS took too long to respond. Retrying…";
+    default:
+      return err.message || "Couldn't get your location.";
+  }
 }
 
 async function fetchRoute(from: LatLng, to: LatLng): Promise<RouteInfo | null> {
@@ -91,9 +124,12 @@ export default function ActivePickupMap({ listing, onPickedUp }: ActivePickupMap
 
   const [position, setPosition] = useState<LatLng | null>(null);
   const [route, setRoute] = useState<RouteInfo | null>(null);
+  const [isRouting, setIsRouting] = useState(false);
   const [isBusy, setIsBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const lastSentAt = useRef(0);
+  const lastRoutedPosition = useRef<LatLng | null>(null);
+  const lastRouteFetchAt = useRef(0);
 
   const donor: LatLng | null =
     listing.latitude != null && listing.longitude != null
@@ -111,6 +147,7 @@ export default function ActivePickupMap({ listing, onPickedUp }: ActivePickupMap
       (pos) => {
         const next = { lat: pos.coords.latitude, lng: pos.coords.longitude };
         setPosition(next);
+        setError(null);
 
         const now = Date.now();
         if (now - lastSentAt.current > BROADCAST_INTERVAL_MS) {
@@ -126,21 +163,47 @@ export default function ActivePickupMap({ listing, onPickedUp }: ActivePickupMap
             });
         }
       },
-      (err) => setError(err.message),
+      (err) => setError(friendlyGeoError(err)),
       { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 },
     );
     return () => navigator.geolocation.clearWatch(watchId);
   }, [supabase]);
 
+  // Re-route as the NGO moves, but throttled by distance + time so we don't
+  // hammer OSRM on every GPS tick. A failed refetch keeps the last good
+  // route on screen instead of wiping it.
   useEffect(() => {
     if (!position || !donor) return;
+
+    const now = Date.now();
+    const last = lastRoutedPosition.current;
+    const movedEnough =
+      !last || haversineMeters(last, position) >= MIN_REROUTE_DISTANCE_METERS;
+    const enoughTimePassed = now - lastRouteFetchAt.current >= MIN_REROUTE_INTERVAL_MS;
+
+    // Always fetch the very first route immediately; after that, only
+    // re-route once we've actually moved and some time has passed.
+    if (lastRouteFetchAt.current !== 0 && (!movedEnough || !enoughTimePassed)) return;
+
     let cancelled = false;
+    lastRouteFetchAt.current = now;
+    setIsRouting(true);
+
     fetchRoute(position, donor).then((r) => {
-      if (!cancelled) setRoute(r);
+      if (cancelled) return;
+      setIsRouting(false);
+      if (r) {
+        setRoute(r);
+        lastRoutedPosition.current = position;
+      }
+      // On failure (e.g. rate-limited), silently keep showing the last
+      // known-good route rather than clearing it.
     });
+
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [position?.lat, position?.lng, donor?.lat, donor?.lng]);
 
   const points = useMemo<[number, number][]>(() => {
@@ -212,7 +275,7 @@ export default function ActivePickupMap({ listing, onPickedUp }: ActivePickupMap
             <span className="flex items-center gap-1.5 text-[#5B675F]">
               <Navigation2 size={13} />
               {route
-                ? `${(route.distanceMeters / 1000).toFixed(1)} km · ${Math.round(route.durationSeconds / 60)} min`
+                ? `${(route.distanceMeters / 1000).toFixed(1)} km · ${Math.round(route.durationSeconds / 60)} min${isRouting ? " · updating…" : ""}`
                 : position
                   ? "Finding route…"
                   : "Waiting for GPS…"}

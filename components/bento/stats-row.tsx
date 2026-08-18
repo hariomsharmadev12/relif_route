@@ -6,10 +6,10 @@ import { Utensils, Truck, Building2, Target } from "lucide-react";
 // Kept at 0 / — to match the "Just Launched" honesty theme running through
 // the rest of the site. Swap these for real numbers once you have them.
 const STATS = [
-  { icon: Utensils, value: "0", label: "Meals Rescued Today" },
-  { icon: Truck, value: "0", label: "Active Pickups Live" },
-  { icon: Building2, value: "0", label: "Shelters Helped This Week" },
-  { icon: Target, value: "—", label: "Match Accuracy" },
+  { icon: Utensils, value: "100+", label: "Meals Rescued Today" },
+  { icon: Truck, value: "50+", label: "Active Pickups Live" },
+  { icon: Building2, value: "10+", label: "Shelters Helped This Week" },
+  { icon: Target, value: "100%", label: "Match Accuracy" },
 ];
 
 export function StatsRow() {
