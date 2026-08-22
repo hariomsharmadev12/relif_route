@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import {
   Package,
   Clock3,
@@ -8,13 +9,20 @@ import {
   Sprout,
   Loader2,
 } from "lucide-react";
-import type { FoodListing } from "./types";
+import type { DonorFoodListing } from "./types";
 import { FoodCard } from "./food-card";
 import { StatCard } from "./stat-card";
 import { getFreshness } from "./time-utils";
 
+const ActiveDeliveryMap = dynamic(() => import("./active-delivery-map"), {
+  ssr: false,
+  loading: () => (
+    <div className="mb-6 h-[320px] rounded-2xl bg-[#F7F8F5] animate-pulse" />
+  ),
+});
+
 interface DashboardViewProps {
-  listings: FoodListing[];
+  listings: DonorFoodListing[];
   isLoading?: boolean;
   donorFirstName: string;
   onUploadMore: () => void;
@@ -32,6 +40,7 @@ export function DashboardView({
     (l) => getFreshness(l.createdAt, l.goodUntil, now).urgency === "soon",
   );
   const pickedUp = listings.filter((l) => l.status === "picked_up");
+  const activeDeliveries = listings.filter((l) => l.status === "accepted");
 
   return (
     <div className="mx-auto max-w-6xl px-5 py-8 lg:px-10 lg:py-12">
@@ -53,25 +62,18 @@ export function DashboardView({
         </button>
       </div>
 
-      <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <StatCard
-          icon={Package}
-          label="Active listings"
-          value={active.length}
-          accent="green"
-        />
-        <StatCard
-          icon={Clock3}
-          label="Expiring within 90 min"
-          value={expiringSoon.length}
-          accent="amber"
-        />
-        <StatCard
-          icon={CheckCircle2}
-          label="Picked up"
-          value={pickedUp.length}
-          accent="neutral"
-        />
+      {activeDeliveries.length > 0 && (
+        <div className="mt-6">
+          {activeDeliveries.map((listing) => (
+            <ActiveDeliveryMap key={listing.id} listing={listing} />
+          ))}
+        </div>
+      )}
+
+      <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <StatCard icon={Package} label="Active listings" value={active.length} accent="green" />
+        <StatCard icon={Clock3} label="Expiring within 90 min" value={expiringSoon.length} accent="amber" />
+        <StatCard icon={CheckCircle2} label="Picked up" value={pickedUp.length} accent="neutral" />
       </div>
 
       <div className="mt-10">
@@ -114,8 +116,7 @@ function EmptyState({ onUploadMore }: { onUploadMore: () => void }) {
         No food listed yet
       </p>
       <p className="max-w-sm text-[14px] text-[#5B675F]">
-        List your first batch of surplus food so a nearby volunteer can pick it
-        up before it goes to waste.
+        List your first batch of surplus food so a nearby volunteer can pick it up before it goes to waste.
       </p>
       <button
         type="button"

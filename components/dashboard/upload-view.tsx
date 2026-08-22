@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import { createBrowserClient } from "@supabase/ssr";
 import {
   ImagePlus,
@@ -9,9 +9,30 @@ import {
   AlertCircle,
   X,
   MapPin,
+  ChefHat,
+  Package,
+  Thermometer,
+  ShieldAlert,
+  CalendarClock,
 } from "lucide-react";
-import type { FoodListing, FoodUnit } from "./types";
-import { FOOD_UNITS } from "./types";
+import type {
+  FoodListing,
+  FoodUnit,
+  FoodCategory,
+  DietType,
+  PreparationType,
+  StorageMethod,
+  SafetyConcern,
+} from "./types";
+import {
+  FOOD_UNITS,
+  FOOD_CATEGORIES,
+  DIET_TYPES,
+  STORAGE_METHODS_FRESH,
+  STORAGE_METHODS_PACKAGED,
+  SAFETY_CONCERNS_FRESH,
+  SAFETY_CONCERNS_PACKAGED,
+} from "./types";
 import { FoodCard } from "./food-card";
 
 interface UploadViewProps {
@@ -69,6 +90,29 @@ async function searchAddress(
     .filter((s) => Number.isFinite(s.lat) && Number.isFinite(s.lng));
 }
 
+// Parses an optional numeric text input into a number, or null when blank
+// / not a valid number. Used for the handful of "if measurable" fields.
+function parseOptionalNumber(value: string): number | null {
+  if (!value.trim()) return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+// datetime-local inputs render a tiny, easy-to-miss native calendar
+// glyph (and it's inconsistently placed across browsers). We render our
+// own calendar icon on top and use showPicker() to open the same native
+// picker from it — falling back to a plain focus() on browsers that
+// don't support showPicker() yet (e.g. older Safari).
+function openDatePicker(ref: RefObject<HTMLInputElement>) {
+  const el = ref.current;
+  if (!el) return;
+  if (typeof el.showPicker === "function") {
+    el.showPicker();
+  } else {
+    el.focus();
+  }
+}
+
 export function UploadView({ listings, isLoading, onSubmitted }: UploadViewProps) {
   const [supabase] = useState(() =>
     createBrowserClient(
@@ -78,6 +122,8 @@ export function UploadView({ listings, isLoading, onSubmitted }: UploadViewProps
   );
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const preparedAtRef = useRef<HTMLInputElement>(null);
+  const goodUntilRef = useRef<HTMLInputElement>(null);
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -90,6 +136,23 @@ export function UploadView({ listings, isLoading, onSubmitted }: UploadViewProps
     null,
   );
   const [goodUntil, setGoodUntil] = useState("");
+
+  // --- Food details -------------------------------------------------------
+  const [category, setCategory] = useState<FoodCategory>("cooked_meal");
+  const [dietType, setDietType] = useState<DietType>("veg");
+  const [servesCount, setServesCount] = useState("");
+  const [ingredientsAllergens, setIngredientsAllergens] = useState("");
+
+  // --- Preparation & storage (the conditional branch) ----------------------
+  const [preparationType, setPreparationType] = useState<PreparationType>("fresh");
+  const [preparedAt, setPreparedAt] = useState("");
+  const [storageMethod, setStorageMethod] = useState<StorageMethod>("room_temperature");
+  const [storageMethodOther, setStorageMethodOther] = useState("");
+  const [currentTemp, setCurrentTemp] = useState("");
+  const [storageDurationHours, setStorageDurationHours] = useState("");
+  const [safetyConcerns, setSafetyConcerns] = useState<Set<SafetyConcern>>(
+    new Set(),
+  );
 
   const [locateState, setLocateState] = useState<LocateState>("idle");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -109,6 +172,39 @@ export function UploadView({ listings, isLoading, onSubmitted }: UploadViewProps
       searchAbortRef.current?.abort();
     };
   }, []);
+
+  const storageOptions =
+    preparationType === "fresh" ? STORAGE_METHODS_FRESH : STORAGE_METHODS_PACKAGED;
+  const concernOptions =
+    preparationType === "fresh" ? SAFETY_CONCERNS_FRESH : SAFETY_CONCERNS_PACKAGED;
+
+  // Switching between fresh/packaged changes which storage methods and
+  // safety concerns are even valid, so: drop "hot holding" if it's no
+  // longer an option, and drop any previously-flagged concern that
+  // doesn't apply to the new path (e.g. "packaging damaged" for fresh food).
+  function handlePreparationTypeChange(type: PreparationType) {
+    setPreparationType(type);
+
+    if (type === "packaged" && storageMethod === "hot_holding") {
+      setStorageMethod("room_temperature");
+    }
+
+    const allowed = new Set(
+      (type === "fresh" ? SAFETY_CONCERNS_FRESH : SAFETY_CONCERNS_PACKAGED).map(
+        (c) => c.value,
+      ),
+    );
+    setSafetyConcerns((prev) => new Set([...prev].filter((c) => allowed.has(c))));
+  }
+
+  function toggleConcern(concern: SafetyConcern) {
+    setSafetyConcerns((prev) => {
+      const next = new Set(prev);
+      if (next.has(concern)) next.delete(concern);
+      else next.add(concern);
+      return next;
+    });
+  }
 
   function handlePickFile(file: File | undefined | null) {
     if (!file) return;
@@ -225,6 +321,18 @@ export function UploadView({ listings, isLoading, onSubmitted }: UploadViewProps
     setSuggestions([]);
     setShowSuggestions(false);
     setIsSearchingAddress(false);
+
+    setCategory("cooked_meal");
+    setDietType("veg");
+    setServesCount("");
+    setIngredientsAllergens("");
+    setPreparationType("fresh");
+    setPreparedAt("");
+    setStorageMethod("room_temperature");
+    setStorageMethodOther("");
+    setCurrentTemp("");
+    setStorageDurationHours("");
+    setSafetyConcerns(new Set());
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -276,6 +384,22 @@ export function UploadView({ listings, isLoading, onSubmitted }: UploadViewProps
       acceptedByName: null,
       acceptedByPhone: null,
       acceptedAt: null,
+
+      // Food-safety fields
+      category,
+      dietType,
+      servesCount: parseOptionalNumber(servesCount),
+      preparationType,
+      preparedAt: preparedAt ? new Date(preparedAt).toISOString() : null,
+      storageMethod,
+      storageMethodOther:
+        storageMethod === "other" ? storageMethodOther.trim() || null : null,
+      currentTempCelsius: parseOptionalNumber(currentTemp),
+      storageDurationHours: parseOptionalNumber(storageDurationHours),
+      safetyConcerns: Array.from(safetyConcerns),
+      ingredientsAllergens: ingredientsAllergens.trim() || null,
+      // Auto-captured, not user-entered — "current date/time" from the brief.
+      reportedAt: new Date().toISOString(),
     };
 
     try {
@@ -323,7 +447,9 @@ export function UploadView({ listings, isLoading, onSubmitted }: UploadViewProps
       } = supabase.storage.from("food-photos").getPublicUrl(filePath);
 
       // Insert the row into `food_listings`. Adjust the table/column
-      // names here to match your actual Supabase schema.
+      // names here to match your actual Supabase schema — you'll need
+      // to add columns for the food-safety fields below (safety_concerns
+      // can be a jsonb or text[] column).
       const { error: insertError } = await supabase
         .from("food_listings")
         .insert({
@@ -338,6 +464,19 @@ export function UploadView({ listings, isLoading, onSubmitted }: UploadViewProps
           good_until: localListing.goodUntil,
           photo_url: publicUrl,
           status: localListing.status,
+
+          category: localListing.category,
+          diet_type: localListing.dietType,
+          serves_count: localListing.servesCount,
+          preparation_type: localListing.preparationType,
+          prepared_at: localListing.preparedAt,
+          storage_method: localListing.storageMethod,
+          storage_method_other: localListing.storageMethodOther,
+          current_temp_celsius: localListing.currentTempCelsius,
+          storage_duration_hours: localListing.storageDurationHours,
+          safety_concerns: localListing.safetyConcerns,
+          ingredients_allergens: localListing.ingredientsAllergens,
+          reported_at: localListing.reportedAt,
         });
       if (insertError) throw insertError;
 
@@ -465,6 +604,50 @@ export function UploadView({ listings, isLoading, onSubmitted }: UploadViewProps
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label
+                htmlFor="category"
+                className="mb-1.5 block text-[13px] font-semibold text-[#14231C]"
+              >
+                Category
+              </label>
+              <select
+                id="category"
+                value={category}
+                onChange={(e) => setCategory(e.target.value as FoodCategory)}
+                className="w-full rounded-xl border border-[#D5DAD1] bg-white px-4 py-3 text-[14px] text-[#14231C] outline-none focus:border-[#1F6B4C] focus:ring-2 focus:ring-[#1F6B4C]/15"
+              >
+                {FOOD_CATEGORIES.map((c) => (
+                  <option key={c.value} value={c.value}>
+                    {c.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1.5 block text-[13px] font-semibold text-[#14231C]">
+                Diet
+              </label>
+              <div className="grid grid-cols-3 gap-1.5">
+                {DIET_TYPES.map((d) => (
+                  <button
+                    key={d.value}
+                    type="button"
+                    onClick={() => setDietType(d.value)}
+                    className={`rounded-xl border px-2 py-3 text-[12px] font-medium transition-colors ${
+                      dietType === d.value
+                        ? "border-[#1F6B4C] bg-[#1F6B4C] text-white"
+                        : "border-[#D5DAD1] bg-white text-[#14231C] hover:border-[#1F6B4C]/60"
+                    }`}
+                  >
+                    {d.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label
                 htmlFor="quantity"
                 className="mb-1.5 block text-[13px] font-semibold text-[#14231C]"
               >
@@ -500,9 +683,210 @@ export function UploadView({ listings, isLoading, onSubmitted }: UploadViewProps
                 ))}
               </select>
             </div>
+            <div>
+              <label
+                htmlFor="serves-count"
+                className="mb-1.5 block text-[13px] font-semibold text-[#14231C]"
+              >
+                Serves <span className="font-normal text-[#7C8B81]">(optional)</span>
+              </label>
+              <input
+                id="serves-count"
+                type="number"
+                min="1"
+                value={servesCount}
+                onChange={(e) => setServesCount(e.target.value)}
+                placeholder="e.g. 40"
+                className="w-full rounded-xl border border-[#D5DAD1] bg-white px-4 py-3 text-[14px] text-[#14231C] outline-none placeholder:text-[#A6AEA8] focus:border-[#1F6B4C] focus:ring-2 focus:ring-[#1F6B4C]/15"
+              />
+            </div>
           </div>
 
-          <div className="relative">
+          <div>
+            <label
+              htmlFor="ingredients"
+              className="mb-1.5 block text-[13px] font-semibold text-[#14231C]"
+            >
+              Ingredients / allergens{" "}
+              <span className="font-normal text-[#7C8B81]">(optional)</span>
+            </label>
+            <textarea
+              id="ingredients"
+              rows={2}
+              value={ingredientsAllergens}
+              onChange={(e) => setIngredientsAllergens(e.target.value)}
+              placeholder="e.g. Contains dairy, nuts"
+              className="w-full resize-none rounded-xl border border-[#D5DAD1] bg-white px-4 py-3 text-[14px] text-[#14231C] outline-none placeholder:text-[#A6AEA8] focus:border-[#1F6B4C] focus:ring-2 focus:ring-[#1F6B4C]/15"
+            />
+          </div>
+
+          {/* Preparation type — this drives everything below it */}
+          <div className="border-t border-[#E7EAE4] pt-5">
+            <p className="mb-2 text-[13px] font-semibold uppercase tracking-[0.06em] text-[#7C8B81]">
+              How was it made?
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => handlePreparationTypeChange("fresh")}
+                className={`flex items-center justify-center gap-2 rounded-xl border px-4 py-3 text-[13px] font-medium transition-colors ${
+                  preparationType === "fresh"
+                    ? "border-[#1F6B4C] bg-[#1F6B4C] text-white"
+                    : "border-[#D5DAD1] bg-white text-[#14231C] hover:border-[#1F6B4C]/60"
+                }`}
+              >
+                <ChefHat size={15} /> Freshly prepared
+              </button>
+              <button
+                type="button"
+                onClick={() => handlePreparationTypeChange("packaged")}
+                className={`flex items-center justify-center gap-2 rounded-xl border px-4 py-3 text-[13px] font-medium transition-colors ${
+                  preparationType === "packaged"
+                    ? "border-[#1F6B4C] bg-[#1F6B4C] text-white"
+                    : "border-[#D5DAD1] bg-white text-[#14231C] hover:border-[#1F6B4C]/60"
+                }`}
+              >
+                <Package size={15} /> Packaged
+              </button>
+            </div>
+
+            <div className="mt-3">
+              <label
+                htmlFor="prepared-at"
+                className="mb-1.5 block text-[13px] font-semibold text-[#14231C]"
+              >
+                {preparationType === "fresh" ? "Prepared on" : "Packed on"}{" "}
+                <span className="font-normal text-[#7C8B81]">(optional)</span>
+              </label>
+              <div className="relative">
+                <input
+                  ref={preparedAtRef}
+                  id="prepared-at"
+                  type="datetime-local"
+                  value={preparedAt}
+                  onChange={(e) => setPreparedAt(e.target.value)}
+                  onClick={() => openDatePicker(preparedAtRef)}
+                  className="w-full cursor-pointer rounded-xl border border-[#D5DAD1] bg-white px-4 py-3 pr-11 text-[14px] text-[#14231C] outline-none focus:border-[#1F6B4C] focus:ring-2 focus:ring-[#1F6B4C]/15 [&::-webkit-calendar-picker-indicator]:hidden"
+                />
+                <button
+                  type="button"
+                  tabIndex={-1}
+                  onClick={() => openDatePicker(preparedAtRef)}
+                  aria-label="Open calendar"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-[#7C8B81] transition-colors hover:text-[#1F6B4C]"
+                >
+                  <CalendarClock size={17} />
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Storage & safety — options depend on preparationType */}
+          <div className="border-t border-[#E7EAE4] pt-5">
+            <p className="mb-2 text-[13px] font-semibold uppercase tracking-[0.06em] text-[#7C8B81]">
+              Storage & safety
+            </p>
+
+            <label className="mb-1.5 block text-[13px] font-semibold text-[#14231C]">
+              How is it being stored?
+            </label>
+            <div className="flex flex-wrap gap-2">
+              {storageOptions.map((s) => (
+                <button
+                  key={s.value}
+                  type="button"
+                  onClick={() => setStorageMethod(s.value)}
+                  className={`rounded-full border px-3.5 py-2 text-[12.5px] font-medium transition-colors ${
+                    storageMethod === s.value
+                      ? "border-[#1F6B4C] bg-[#1F6B4C] text-white"
+                      : "border-[#D5DAD1] bg-white text-[#14231C] hover:border-[#1F6B4C]/60"
+                  }`}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+
+            {storageMethod === "other" && (
+              <input
+                type="text"
+                value={storageMethodOther}
+                onChange={(e) => setStorageMethodOther(e.target.value)}
+                placeholder="Describe how it's stored"
+                className="mt-2 w-full rounded-xl border border-[#D5DAD1] bg-white px-4 py-3 text-[14px] text-[#14231C] outline-none placeholder:text-[#A6AEA8] focus:border-[#1F6B4C] focus:ring-2 focus:ring-[#1F6B4C]/15"
+              />
+            )}
+
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              <div>
+                <label
+                  htmlFor="current-temp"
+                  className="mb-1.5 flex items-center gap-1 text-[13px] font-semibold text-[#14231C]"
+                >
+                  <Thermometer size={13} /> Temp, if known (°C)
+                </label>
+                <input
+                  id="current-temp"
+                  type="number"
+                  value={currentTemp}
+                  onChange={(e) => setCurrentTemp(e.target.value)}
+                  placeholder="e.g. 4"
+                  className="w-full rounded-xl border border-[#D5DAD1] bg-white px-4 py-3 text-[14px] text-[#14231C] outline-none placeholder:text-[#A6AEA8] focus:border-[#1F6B4C] focus:ring-2 focus:ring-[#1F6B4C]/15"
+                />
+              </div>
+              <div>
+                <label
+                  htmlFor="storage-duration"
+                  className="mb-1.5 block text-[13px] font-semibold text-[#14231C]"
+                >
+                  Stored for, approx. (hrs)
+                </label>
+                <input
+                  id="storage-duration"
+                  type="number"
+                  min="0"
+                  value={storageDurationHours}
+                  onChange={(e) => setStorageDurationHours(e.target.value)}
+                  placeholder="e.g. 2"
+                  className="w-full rounded-xl border border-[#D5DAD1] bg-white px-4 py-3 text-[14px] text-[#14231C] outline-none placeholder:text-[#A6AEA8] focus:border-[#1F6B4C] focus:ring-2 focus:ring-[#1F6B4C]/15"
+                />
+              </div>
+            </div>
+
+            <div className="mt-4">
+              <label className="mb-1.5 block text-[13px] font-semibold text-[#14231C]">
+                Flag anything that applies{" "}
+                <span className="font-normal text-[#7C8B81]">(optional)</span>
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {concernOptions.map((c) => {
+                  const active = safetyConcerns.has(c.value);
+                  return (
+                    <button
+                      key={c.value}
+                      type="button"
+                      onClick={() => toggleConcern(c.value)}
+                      className={`rounded-full border px-3.5 py-2 text-[12.5px] font-medium transition-colors ${
+                        active
+                          ? "border-[#B5442E] bg-[#FBEAE6] text-[#B5442E]"
+                          : "border-[#D5DAD1] bg-white text-[#14231C] hover:border-[#1F6B4C]/60"
+                      }`}
+                    >
+                      {c.label}
+                    </button>
+                  );
+                })}
+              </div>
+              {safetyConcerns.size > 0 && (
+                <p className="mt-2 flex items-start gap-1.5 text-[12px] text-[#B5442E]">
+                  <ShieldAlert size={14} className="mt-0.5 shrink-0" />
+                  Volunteers will see these flags before pickup.
+                </p>
+              )}
+            </div>
+          </div>
+
+          <div className="relative border-t border-[#E7EAE4] pt-5">
             <label
               htmlFor="address"
               className="mb-1.5 block text-[13px] font-semibold text-[#14231C]"
@@ -585,15 +969,30 @@ export function UploadView({ listings, isLoading, onSubmitted }: UploadViewProps
               htmlFor="good-until"
               className="mb-1.5 block text-[13px] font-semibold text-[#14231C]"
             >
-              Good until
+              {preparationType === "fresh"
+                ? "Safe to eat until"
+                : "Best before / use-by"}
             </label>
-            <input
-              id="good-until"
-              type="datetime-local"
-              value={goodUntil}
-              onChange={(e) => setGoodUntil(e.target.value)}
-              className="w-full rounded-xl border border-[#D5DAD1] bg-white px-4 py-3 text-[14px] text-[#14231C] outline-none focus:border-[#1F6B4C] focus:ring-2 focus:ring-[#1F6B4C]/15"
-            />
+            <div className="relative">
+              <input
+                ref={goodUntilRef}
+                id="good-until"
+                type="datetime-local"
+                value={goodUntil}
+                onChange={(e) => setGoodUntil(e.target.value)}
+                onClick={() => openDatePicker(goodUntilRef)}
+                className="w-full cursor-pointer rounded-xl border border-[#D5DAD1] bg-white px-4 py-3 pr-11 text-[14px] text-[#14231C] outline-none focus:border-[#1F6B4C] focus:ring-2 focus:ring-[#1F6B4C]/15 [&::-webkit-calendar-picker-indicator]:hidden"
+              />
+              <button
+                type="button"
+                tabIndex={-1}
+                onClick={() => openDatePicker(goodUntilRef)}
+                aria-label="Open calendar"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-[#7C8B81] transition-colors hover:text-[#1F6B4C]"
+              >
+                <CalendarClock size={17} />
+              </button>
+            </div>
           </div>
 
           {error && (

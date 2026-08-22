@@ -24,14 +24,21 @@ export function NgoFoodCard({
   );
   const colors = URGENCY_COLORS[urgency];
   const isPending = listing.status === "available";
+  const donor = listing.donor;
+  const isRestaurant = donor?.donorType === "restaurant";
 
-  // Added aggressive fallbacks to prevent "Not provided"
-  const donorName =
-    listing.donor?.donorType === "restaurant"
-      ? listing.donor?.restaurantName ||
-        listing.donor?.contactPerson ||
-        listing.donor?.email?.split("@")[0]
-      : listing.donor?.fullName || listing.donor?.email?.split("@")[0];
+  // Aggressive fallbacks so a donor with a blank name/restaurant field
+  // still shows something useful instead of "Not provided".
+  const donorName = isRestaurant
+    ? donor?.restaurantName || donor?.contactPerson || donor?.email?.split("@")[0]
+    : donor?.fullName || donor?.email?.split("@")[0];
+
+  // Only surface "Contact: X" as its own line when it adds information —
+  // i.e. a restaurant with both a business name and a distinct named
+  // contact. For individual donors, or when the contact person is the
+  // same string already shown as the headline name, it'd be redundant.
+  const showContactPerson =
+    isRestaurant && donor?.contactPerson && donor.contactPerson !== donorName;
 
   return (
     <article className="flex flex-col overflow-hidden rounded-2xl border border-[#E7E9E4] bg-white transition-shadow hover:shadow-[0_8px_24px_-12px_rgba(20,30,24,0.18)]">
@@ -65,24 +72,46 @@ export function NgoFoodCard({
         </div>
 
         <div className="rounded-xl border border-[#E7E9E4] bg-[#F7F8F5] p-3">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#7C8B81]">
-            Donor
-          </p>
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#7C8B81]">
+              Donor
+            </p>
+            {donor?.donorType && (
+              <span className="shrink-0 rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.04em] text-[#5B675F]">
+                {isRestaurant ? "Restaurant" : "Individual"}
+              </span>
+            )}
+          </div>
+
           <div className="mt-1.5 flex items-center gap-1.5 text-[13px] text-[#14231C]">
-            {listing.donor?.donorType === "restaurant" ? (
+            {isRestaurant ? (
               <Building2 size={14} className="shrink-0 text-[#5B675F]" />
             ) : (
               <User2 size={14} className="shrink-0 text-[#5B675F]" />
             )}
             <span className="font-medium">{donorName || "Not provided"}</span>
           </div>
-          {listing.donor?.phone && (
+
+          {showContactPerson && (
+            <p className="mt-1 pl-5 text-[12.5px] text-[#5B675F]">
+              Contact: {donor!.contactPerson}
+            </p>
+          )}
+
+          {donor?.phone && (
             <a
-              href={`tel:${listing.donor.phone}`}
-              className="mt-1 flex items-center gap-1.5 text-[13px] text-[#1F6B4C] hover:underline"
+              href={`tel:${donor.phone}`}
+              className="mt-1.5 flex items-center gap-1.5 text-[13px] text-[#1F6B4C] hover:underline"
             >
-              <Phone size={13} /> {listing.donor.phone}
+              <Phone size={13} /> {donor.phone}
             </a>
+          )}
+
+          {donor?.address && (
+            <div className="mt-1 flex items-start gap-1.5 text-[12.5px] text-[#7C8B81]">
+              <MapPin size={12} className="mt-0.5 shrink-0" />
+              <span className="line-clamp-2">{donor.address}</span>
+            </div>
           )}
         </div>
 

@@ -1,9 +1,16 @@
 "use client";
 
 import { useEffect, useState } from "react";
-// Added Building2 and Phone imports to display the NGO data
-import { MapPin, CheckCircle2, Building2, Phone } from "lucide-react";
-import type { FoodListing } from "./types";
+import {
+  MapPin,
+  CheckCircle2,
+  Building2,
+  Phone,
+  Users,
+  ShieldAlert,
+} from "lucide-react";
+import type { DietType, FoodListing } from "./types";
+import { getCategoryLabel, getSafetyConcernLabel } from "./types";
 import { getFreshness, URGENCY_COLORS } from "./time-utils";
 
 interface FoodCardProps {
@@ -12,6 +19,31 @@ interface FoodCardProps {
 
 const RADIUS = 18;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
+
+// Indian veg/non-veg convention: a small square outline with a colored
+// dot inside — green for veg, maroon for non-veg. Vegan gets the same
+// mark in the veg color family since it's a strict subset.
+const DIET_MARK_COLOR: Record<DietType, string> = {
+  veg: "#1F6B4C",
+  vegan: "#1F6B4C",
+  non_veg: "#B5442E",
+};
+
+function DietMark({ dietType }: { dietType: DietType }) {
+  const color = DIET_MARK_COLOR[dietType];
+  return (
+    <span
+      className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-[3px] border"
+      style={{ borderColor: color }}
+      aria-hidden="true"
+    >
+      <span
+        className="h-1.5 w-1.5 rounded-full"
+        style={{ backgroundColor: color }}
+      />
+    </span>
+  );
+}
 
 export function FoodCard({ listing }: FoodCardProps) {
   const [now, setNow] = useState(() => new Date());
@@ -29,6 +61,7 @@ export function FoodCard({ listing }: FoodCardProps) {
   );
   const colors = URGENCY_COLORS[urgency];
   const dashOffset = CIRCUMFERENCE * (1 - percentRemaining / 100);
+  const hasSafetyConcerns = listing.safetyConcerns.length > 0;
 
   return (
     <article className="group flex flex-col overflow-hidden rounded-2xl border border-[#E7E9E4] bg-white transition-shadow hover:shadow-[0_8px_24px_-12px_rgba(20,30,24,0.18)]">
@@ -81,7 +114,8 @@ export function FoodCard({ listing }: FoodCardProps) {
 
       <div className="flex flex-1 flex-col gap-2.5 p-4">
         <div className="flex items-start justify-between gap-2">
-          <h3 className="font-[family-name:var(--font-dashboard-display)] text-[17px] leading-tight text-[#14231C]">
+          <h3 className="flex items-center gap-1.5 font-[family-name:var(--font-dashboard-display)] text-[17px] leading-tight text-[#14231C]">
+            <DietMark dietType={listing.dietType} />
             {listing.name}
           </h3>
           <span className="shrink-0 font-[family-name:var(--font-dashboard-mono)] text-[13px] text-[#5B675F]">
@@ -89,12 +123,33 @@ export function FoodCard({ listing }: FoodCardProps) {
           </span>
         </div>
 
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12.5px] text-[#7C8B81]">
+          <span>{getCategoryLabel(listing.category)}</span>
+          {listing.servesCount !== null && (
+            <span className="flex items-center gap-1">
+              <Users size={12} /> Serves ~{listing.servesCount}
+            </span>
+          )}
+        </div>
+
         <div className="flex items-start gap-1.5 text-[13px] text-[#5B675F]">
           <MapPin size={14} className="mt-0.5 shrink-0" />
           <span className="line-clamp-2">{listing.pickupAddress}</span>
         </div>
 
-        {/* --- NEW SECTION: Display NGO details once accepted --- */}
+        {/* --- Safety concerns flagged by the donor at listing time --- */}
+        {hasSafetyConcerns && (
+          <div className="flex items-start gap-1.5 rounded-xl border border-[#F0D2C9] bg-[#FBEAE6] px-3 py-2 text-[12px] text-[#B5442E]">
+            <ShieldAlert size={14} className="mt-0.5 shrink-0" />
+            <span>
+              {listing.safetyConcerns
+                .map((concern) => getSafetyConcernLabel(concern))
+                .join(", ")}
+            </span>
+          </div>
+        )}
+
+        {/* --- NGO details once accepted --- */}
         {(listing.status === "accepted" || listing.status === "picked_up") &&
           listing.acceptedByName && (
             <div className="mt-2 rounded-xl border border-[#E7E9E4] bg-[#F7F8F5] p-3">

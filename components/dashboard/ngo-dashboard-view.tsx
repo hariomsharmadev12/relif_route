@@ -6,7 +6,7 @@ import { createBrowserClient } from "@supabase/ssr";
 import { Loader2, Inbox, PackageCheck, AlertCircle } from "lucide-react";
 import { NgoFoodCard } from "./ngo-food-card";
 import type { NgoFoodListing, ReceiverProfile } from "./types";
-import { mapRowToNgoListing } from "./types";
+import { mapRowToNgoListing, mapRowToDonorInfo } from "./types";
 
 // Leaflet needs window — must load client-side only.
 const ActivePickupMap = dynamic(() => import("./active-pickup-map"), {
@@ -112,10 +112,19 @@ export function NgoDashboardView() {
         (row: any) => !(row.status === "available" && declinedIds.has(row.id)),
       );
 
-      // 5. Map the data to your UI state (passing the automatically joined donor object)
+      // 5. Map the data to your UI state. `row.donors` comes back from
+      // Supabase in snake_case (matching DonorRow) — it has to go through
+      // mapRowToDonorInfo() before it matches the camelCase DonorInfo shape
+      // NgoFoodCard reads (fullName, restaurantName, contactPerson, ...).
+      // Passing the raw row through, as before, silently produced an
+      // object with none of the fields the card actually looks for, which
+      // is why the Donor section always fell back to "Not provided."
       setListings(
         visibleRows.map((row: any) =>
-          mapRowToNgoListing(row, row.donors ?? null),
+          mapRowToNgoListing(
+            row,
+            row.donors ? mapRowToDonorInfo(row.donors) : null,
+          ),
         ),
       );
     } catch (err) {
